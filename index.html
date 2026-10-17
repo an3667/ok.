@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chiikawa Tìm Chìa Khóa - Tránh Quái Vật</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+        body { background: #87CEEB; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
+        
+        /* Màn hình chung */
+        .screen { position: absolute; width: 800px; height: 500px; background: #fff; border-radius: 12px; box-shadow: 0 0 20px rgba(0,0,0,0.3); overflow: hidden; }
+        .hidden { display: none !important; }
+
+        /* Sảnh chờ - Thay đồ */
+        #lobby { background: linear-gradient(to bottom, #ffecd2, #fcb69f); display: flex; flex-direction: column; align-items: center; padding: 30px; }
+        #lobby h1 { color: #8b4513; margin-bottom: 20px; font-size: 28px; }
+        .character-select { display: flex; gap: 25px; margin: 20px 0; }
+        .char-option { cursor: pointer; padding: 15px; border-radius: 10px; border: 4px solid transparent; transition: 0.3s; text-align: center; background: rgba(255,255,255,0.5); }
+        .char-option.selected { border-color: #ff6b6b; background: #ffd6d6; }
+        .char-option img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
+        .btn { padding: 12px 30px; font-size: 18px; border: none; border-radius: 8px; cursor: pointer; background: #4CAF50; color: white; font-weight: bold; transition: 0.2s; }
+        .btn:hover { transform: scale(1.05); background: #45a049; }
+
+        /* Khu vực game */
+        #game-screen { background: #f0f9ff; position: relative; }
+        #game-canvas { width: 100%; height: 100%; display: block; }
+        .ui { position: absolute; top: 10px; left: 10px; font-size: 20px; font-weight: bold; color: #333; z-index: 10; }
+        
+        /* Thông báo khi chết/thắng */
+        #message-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px 40px; border-radius: 15px; box-shadow: 0 0 30px rgba(0,0,0,0.4); text-align: center; z-index: 100; }
+        #message-box h2 { margin-bottom: 15px; font-size: 26px; }
+        .lose { color: #e74c3c; }
+        .win { color: #27ae60; }
+    </style>
+</head>
+<body>
+
+<!-- ===== Sảnh chờ - Thay đồ ===== -->
+<div id="lobby" class="screen">
+    <h1>✨ Chiikawa - Tìm Chìa Khóa ✨</h1>
+    <p>Chọn nhân vật của bạn:</p>
+    <div class="character-select">
+        <div class="char-option selected" data-char="chiikawa">
+            <img src="https://picsum.photos/id/237/200/200" alt="Chiikawa">
+            <p>Chiikawa</p>
+        </div>
+        <div class="char-option" data-char="usagi">
+            <img src="https://picsum.photos/id/239/200/200" alt="Usagi">
+            <p>Usagi</p>
+        </div>
+        <div class="char-option" data-char="hachiware">
+            <img src="https://picsum.photos/id/40/200/200" alt="Hachiware">
+            <p>Hachiware</p>
+        </div>
+    </div>
+    <button class="btn" id="start-btn">Bắt Đầu Chơi 🎮</button>
+</div>
+
+<!-- ===== Màn hình Game ===== -->
+<div id="game-screen" class="screen hidden">
+    <div class="ui">
+        <div>🔑 Chìa khóa: <span id="key-status">Chưa tìm thấy</span></div>
+        <div>❤️ Mạng: <span id="lives">3</span></div>
+    </div>
+    <canvas id="game-canvas" width="800" height="500"></canvas>
+    <div id="message-box" class="hidden">
+        <h2 id="msg-title"></h2>
+        <p id="msg-text"></p>
+        <button class="btn" id="back-lobby-btn">Quay Lại Sảnh Chờ</button>
+    </div>
+</div>
+
+<script>
+// ===== Biến toàn cục =====
+let selectedChar = 'chiikawa';
+const lobby = document.getElementById('lobby');
+const gameScreen = document.getElementById('game-screen');
+const startBtn = document.getElementById('start-btn');
+const backLobbyBtn = document.getElementById('back-lobby-btn');
+const charOptions = document.querySelectorAll('.char-option');
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+
+let gameRunning = false;
+let player, enemies, key, platforms;
+let hasKey = false;
+let lives = 3;
+
+// ===== Âm thanh =====
+const jumpSound = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-quick-jump-arcade-game-239.mp3");
+const dieSound = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-player-losing-or-failing-2042.mp3");
+const winSound = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-ethereal-fairy-win-sound-2019.mp3");
+jumpSound.volume = 0.5;
+
+// ===== Chọn nhân vật =====
+charOptions.forEach(opt => {
+    opt.addEventListener('click', () => {
+        charOptions.forEach(o => o.classList.remove('selected'));
+        opt.classList.add('selected');
+        selectedChar = opt.dataset.char;
+    });
+});
+
+// ===== Lớp đối tượng =====
+class Player {
+    constructor() {
+        this.width = 40; this.height = 50;
+        this.x = 50; this.y = 400;
+        this.vx = 0; this.vy = 0;
+        this.speed = 5; this.jumpPower = -12;
+        this.gravity = 0.6; this.onGround = false;
+        this.color = selectedChar === 'chiikawa' ? '#ffd93d' : 
+                     selectedChar === 'usagi' ? '#ff6b9d' : '#6bcbff';
+    }
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        // Mặt
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(this.x+12, this.y+15, 4, 0, Math.PI*2);
+        ctx.arc(this.x+28, this.y+15, 4, 0, Math.PI*2);
+        ctx.fill();
+    }
+    update() {
+        this.vy += this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.x < 0) this.x = 0;
+        if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+        // Kiểm tra mặt đất
+        if (this.y + this.height > canvas.height - 30) {
+            this.y = canvas.height - 30 - this.height;
+            this.vy = 0;
+            this.onGround = true;
+        }
+        // Kiểm tra bệ đá
+        this.onGround = this.y + this.height >= canvas.height - 30;
+        platforms.forEach(p => {
+            if (this.vy >= 0 &&
+                this.x + this.width > p.x && this.x < p.x + p.width &&
+                this.y + this.height >= p.y && this.y + this.height <= p.y + 15) {
+                this.y = p.y - this.height;
+                this.vy = 0;
+                this.onGround = true;
+            }
+        });
+    }
+    jump() {
+        if (this.onGround) {
+            this.vy = this.jumpPower;
+            this.onGround = false;
+            jumpSound.currentTime = 0;
+            jumpSound.play();
+        }
+    }
+}
+
+class Enemy {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.width = 35; this.height = 35;
+        this.speed = 2; this.direction = 1;
+        this.startX = x; this.range = 150;
+    }
+    draw() {
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        // Mắt quái
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(this.x+5, this.y+8, 8, 8);
+        ctx.fillRect(this.x+22, this.y+8, 8, 8);
+    }
+    update() {
+        this.x += this.speed * this.direction;
+        if (this.x > this.startX + this.range || this.x < this.startX - this.range) {
+            this.direction *= -1;
+        }
+    }
+}
+
+class Key {
+    constructor() {
+        this.x = 700; this.y = 100;
+        this.width = 25; this.height = 25;
+    }
+    draw() {
+        ctx.fillStyle = '#ffd700';
+        ctx.beginPath();
+        ctx.arc(this.x+12, this.y+8, 10, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillRect(this.x+10, this.y+15, 5, 15);
+        ctx.fillRect(this.x+5, this.y+22, 6, 3);
+        ctx.fillRect(this.x+5, this.y+27, 6, 3);
+    }
+}
+
+// ===== Khởi tạo game =====
+function initGame() {
+    player = new Player();
+    platforms = [
+        {x: 100, y: 380, width: 120, height: 20},
+        {x: 300, y: 300, width: 150, height: 20},
+        {x: 550, y: 220, width: 130, height: 20},
+        {x: 650, y: 130, width: 120, height: 20}
+    ];
+    enemies = [
+        new Enemy(150, 345),
+        new Enemy(400, 265),
+        new Enemy(600, 185)
+    ];
+    key = new Key();
+    hasKey = false;
+    lives = 3;
+    updateUI();
+}
+
+function updateUI() {
+    document.getElementById('lives').textContent = lives;
+    document.getElementById('key-status').textContent = hasKey ? '✅ Đã có' : 'Chưa tìm thấy';
+}
+
+// ===== Kiểm tra va chạm =====
+function checkCollision(a, b) {
+    return a.x < b.x + b.width && a.x + a.width > b.x &&
+           a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+// ===== Vẽ mọi thứ =====
+function draw() {
+    // Nền
+    ctx.fillStyle = '#e0f7ff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Mặt đất
+    ctx.fillStyle = '#8b5a2b';
+    ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+    // Bệ đá
+    ctx.fillStyle = '#9acd32';
+    platforms.forEach(p => ctx.fillRect(p.x, p.y, p.width, p.height));
+    // Nhân vật & quái & chìa khóa
+    player.draw();
+    enemies.forEach(e => e.draw());
+    if (!hasKey) key.draw();
+    // Cổng đích
+    ctx.fillStyle = hasKey ? '#2ecc71' : '#95a5a6';
+    ctx.fillRect(canvas.width - 60, canvas.height - 90, 50, 60);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('ĐÍCH', canvas.width - 52, canvas.height - 55);
+}
+
+// ===== Vòng lặp game =====
+function gameLoop() {
+    if (!gameRunning) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    player.update();
+    enemies.forEach(e => e.update());
+
+    // Nhặt chìa khóa
+    if (!hasKey && checkCollision(player, key)) {
+        hasKey = true;
+        updateUI();
+    }
+
+    // Va chạm quái
+    for (let e of enemies) {
+        if (checkCollision(player, e)) {
+            lives--;
+            dieSound.currentTime = 0;
+            dieSound.play();
+            if (lives <= 0) {
+                gameRunning = false;
+                showMessage('💀 BẠN ĐÃ CHẾT!', 'Bị quái vật bắt rồi, thử lại nhé', 'lose');
+                return;
+            } else {
+                // Đặt lại vị trí
+                player.x = 50; player.y = 400; player.vx = 0; player.vy = 0;
+                updateUI();
+            }
+        }
+    }
+
+    // Đến đích
+    const goal = {x: canvas.width - 60, y: canvas.height - 90, width: 50, height: 60};
+    if (hasKey && checkCollision(player, goal)) {
+        gameRunning = false;
+        winSound.play();
+        showMessage('🎉 CHIẾN THẮNG!', 'Bạn đã mang chìa khóa an toàn về!', 'win');
+        return;
+    }
+
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// ===== Điều khiển =====
+const keys = {};
+document.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (gameRunning && e.code === 'Space') {
+        e.preventDefault();
+        player.jump();
+    }
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+setInterval(() => {
+    if (!gameRunning) return;
+    player.vx = 0;
+    if (keys['ArrowLeft'] || keys['KeyA']) player.vx = -player.speed;
+    if (keys['ArrowRight'] || keys['KeyD']) player.vx = player.speed;
+}, 16);
+
+// ===== Hiển thị thông báo =====
+function showMessage(title, text, type) {
+    const box = document.getElementById('message-box');
+    const titleEl = document.getElementById('msg-title');
+    document.getElementById('msg-text').textContent = text;
+    titleEl.textContent = title;
+    titleEl.className = type;
+    box.classList.remove('hidden');
+}
+
+// ===== Nút bấm =====
+startBtn.addEventListener('click', () => {
+    lobby.classList.add('hidden');
+    gameScreen.classList.remove('hidden');
+    document.getElementById('message-box').classList.add('hidden');
+    initGame();
+    gameRunning = true;
+    gameLoop();
+});
+backLobbyBtn.addEventListener('click', () => {
+    gameScreen.classList.add('hidden');
+    lobby.classList.remove('hidden');
+});
+</script>
+</body>
+</html>
